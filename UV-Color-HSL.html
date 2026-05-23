@@ -168,12 +168,17 @@
 </head>
 <body>
 <div class="picker-container">
-    <div style="display: flex; justify-content: space-between; align-items: center; background: #e8f1fb; padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; border: 1px solid #d9e1ec;">
-      <div style="font-weight: bold; font-size: 12px; color: #1f2937;">☁️ Cloud 동기화</div>
-      <div style="display: flex; gap: 4px;">
-        <button id="syncSettingBtn" class="btn" style="background:#555; padding: 4px 6px;">⚙️</button>
-        <button id="syncUpBtn" class="btn" style="background:#b1a995; padding: 4px 6px; color:#111;">구름저장☁️</button>
-        <button id="syncDownBtn" class="btn" style="background:#e7a86b; padding: 4px 6px; color:#111;">불러오기☁️</button>
+    <div style="background: #e8f1fb; padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; border: 1px solid #d9e1ec;">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-weight: bold; font-size: 12px; color: #1f2937;">☁️ Cloud 동기화</div>
+        <div style="display: flex; gap: 4px;">
+          <button id="syncSettingBtn" class="btn" style="background:#555; padding: 4px 6px;">⚙️</button>
+          <button id="syncUpBtn" class="btn" style="background:#b1a995; padding: 4px 6px; color:#111;">구름저장☁️</button>
+          <button id="syncDownBtn" class="btn" style="background:#e7a86b; padding: 4px 6px; color:#111;">불러오기☁️</button>
+        </div>
+      </div>
+      <div id="last-sync-time" style="font-size: 10px; color: #4b5563; text-align: right; margin-top: 4px; font-family: system-ui, sans-serif;">
+        마지막 수정: 기록 없음
       </div>
     </div>
     <div id="mainPreview" class="main-preview" title="현재 선택/조정 중인 색상 미리보기"></div>
@@ -386,7 +391,82 @@ window.resizeTo(480, 550);
 
     function getSavedPalettes() {
       const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : {};
+      if (!saved) return {};
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && 'palettes' in parsed) {
+          return parsed.palettes || {};
+        }
+        return parsed || {};
+      } catch (e) {
+        return {};
+      }
+    }
+
+    function getSavedLastUpdated() {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return 0;
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object' && 'lastUpdated' in parsed) {
+          return parsed.lastUpdated || 0;
+        }
+        return 0;
+      } catch (e) {
+        return 0;
+      }
+    }
+
+    function savePalettesToLocal(palettes, timestamp = Date.now()) {
+      const dataToSave = {
+        lastUpdated: timestamp,
+        palettes: palettes
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+      updateTimeDisplay();
+    }
+
+    // ==========================================
+    // [공통 1단계] 타임스탬프 검사소 (Helper Function)
+    // ==========================================
+    function shouldUpdateFromCloud(localTime, cloudTime) {
+      if (!localTime) return true; 
+      if (!cloudTime) return false; 
+
+      if (cloudTime >= localTime) {
+        return true; 
+      } else {
+        return confirm(
+          "⚠️ 동기화 충돌 경고 ⚠️\n\n" +
+          "현재 내 PC에 작성된 내용이 구름(Gist) 데이터보다 더 최신입니다.\n" +
+          "과거의 구름 데이터로 정말 덮어쓰시겠습니까?\n\n" +
+          "( [취소]를 누르면 덮어쓰지 않고 현재 내용을 안전하게 유지합니다. )"
+        );
+      }
+    }
+
+    // ==========================================
+    // [보너스] 시간 변환 및 화면 출력 함수
+    // ==========================================
+    function formatTimestamp(ms) {
+      if (!ms) return "기록 없음";
+      
+      const d = new Date(ms);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      
+      return `${year}-${month}-${day} ${hours}:${minutes}`;
+    }
+
+    function updateTimeDisplay() {
+      const timeText = formatTimestamp(getSavedLastUpdated());
+      const el = document.getElementById("last-sync-time");
+      if (el) {
+        el.textContent = `마지막 수정: ${timeText}`;
+      }
     }
 
     function loadCustomDropdown() {
@@ -412,7 +492,7 @@ window.resizeTo(480, 550);
 
       const palettes = getSavedPalettes();
       palettes[name] = { colors, notes: textNotes };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(palettes));
+      savePalettesToLocal(palettes);
 
       loadCustomDropdown();
       customSelect.value = name;
@@ -425,7 +505,7 @@ window.resizeTo(480, 550);
       if (confirm(`'${name}' 조합을 삭제하시겠습니까?`)) {
         const palettes = getSavedPalettes();
         delete palettes[name];
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(palettes));
+        savePalettesToLocal(palettes);
         loadCustomDropdown();
         customNameInput.value = "";
         alert("삭제되었습니다.");
@@ -448,6 +528,7 @@ window.resizeTo(480, 550);
 
     initSlots();
     setMainPreview(activeHex);
+    updateTimeDisplay();
 
 
 // 👇👇 여기부터 클라우드 동기화 (Gist) 로직 추가 👇👇
@@ -479,8 +560,17 @@ window.resizeTo(480, 550);
       const originalText = btn.textContent;
       btn.textContent = "저장중...";
 
-      const palettes = getSavedPalettes(); // 색상 데이터만 가져옴
-      const content = JSON.stringify(palettes, null, 2); // ❗토큰은 포함되지 않음❗
+      const palettes = getSavedPalettes();
+      let lastUpdated = getSavedLastUpdated();
+      if (!lastUpdated) {
+        savePalettesToLocal(palettes);
+        lastUpdated = getSavedLastUpdated();
+      }
+      const dataToSync = {
+        lastUpdated: lastUpdated,
+        palettes: palettes
+      };
+      const content = JSON.stringify(dataToSync, null, 2);
 
       if(!syncInfo.gistId) {
         fetch("https://api.github.com/gists", {
@@ -523,10 +613,27 @@ window.resizeTo(480, 550);
         const file = data.files && data.files["palette_data.json"];
         if(file) {
           try {
-            const imported = JSON.parse(file.content);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(imported)); // 받은 데이터로 로컬 금고 덮어쓰기
-            loadCustomDropdown(); // 드롭다운 새로고침
-            alert("구름에서 색상 조합을 성공적으로 불러왔습니다! ☁️");
+            const incomingData = JSON.parse(file.content);
+            
+            let cloudPalettes = {};
+            let cloudTime = 0;
+            if (incomingData && typeof incomingData === 'object' && 'palettes' in incomingData) {
+              cloudPalettes = incomingData.palettes || {};
+              cloudTime = incomingData.lastUpdated || 0;
+            } else {
+              cloudPalettes = incomingData || {};
+              cloudTime = 0;
+            }
+
+            const localTime = getSavedLastUpdated();
+
+            if (shouldUpdateFromCloud(localTime, cloudTime)) {
+              savePalettesToLocal(cloudPalettes, cloudTime || Date.now());
+              loadCustomDropdown(); // 드롭다운 새로고침
+              alert("구름에서 최신 데이터를 안전하게 불러왔습니다! ☁️");
+            } else {
+              console.log("보호 모드 작동: 로컬 최신 데이터 유지됨");
+            }
           } catch(e) { alert("데이터 파싱 오류가 발생했습니다."); }
         } else { alert("저장된 색상 데이터를 찾을 수 없습니다."); }
       }).catch(err => { btn.textContent = originalText; alert("다운로드 오류: " + err); });
